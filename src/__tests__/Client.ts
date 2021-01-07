@@ -234,11 +234,11 @@ describe("Perform client tests", () => {
         const buf = fs.readFileSync("./src/__tests__/ghost.png");
         await client.me.setAvatar(buf);
 
-        // const receivedFile = fs.readFileSync(
-        //     "./avatars/" + client.me.user().userID
-        // );
+        const receivedFile = fs.readFileSync(
+            "./avatars/" + client.me.user().userID
+        );
 
-        // expect(receivedFile).toEqual(buf);
+        expect(receivedFile).toEqual(buf);
 
         done();
     });
