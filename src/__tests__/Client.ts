@@ -58,176 +58,234 @@ describe("Perform client tests", () => {
 
     test("Create a device", async (done) => {
         const NSK = Client.generateSecretKey();
-        const newDevice = new Client(NSK, clientOptions);
+        const newDevice = new Client(NSK, {
+            ...clientOptions,
+            logLevel: "info",
+        });
+
+        const expectedResults = ["0i", "0o", "1i", "1o"];
+
+        const receivedNew: IMessage[] = [];
+        const onMessageNew = (message: IMessage) => {
+            if (message.decrypted === false) {
+                throw new Error("Decryption failed.");
+            }
+            receivedNew.push(message);
+
+            if (
+                _.isEqual(expectedResults, receivedMain) &&
+                _.isEqual(expectedResults, receivedNew)
+            ) {
+                done();
+            }
+        };
+
+        const receivedMain: IMessage[] = [];
+        const onMessageMain = (message: IMessage) => {
+            if (message.decrypted === false) {
+                throw new Error("Decryption failed.");
+            }
+            receivedMain.push(message);
+
+            if (
+                _.isEqual(expectedResults, receivedMain) &&
+                _.isEqual(expectedResults, receivedNew)
+            ) {
+                done();
+            }
+        };
+
+        const messagesReceived = (messages: IMessage[]): string[] => {
+            const results: string[] = [];
+            for (const message of messages) {
+                const msgStr = message.message + message.direction.charAt(0);
+                results.push(msgStr);
+            }
+
+            const cleanedResults = [...new Set(results.sort())];
+            return cleanedResults;
+        };
 
         newDevice.on("ready", async () => {
-            await newDevice.registerDevice(username, password);
+            await newDevice.devices.register(username, password);
             const err = await newDevice.login(username);
             if (err) {
                 throw new Error(`${err}`);
             }
         });
 
+        newDevice.on("message", onMessageNew);
+        client.on("message", onMessageMain);
+
         newDevice.on("authed", async () => {
-            await newDevice.close();
+            for (let i = 0; i < 2; i++) {
+                await newDevice.messages.send(
+                    newDevice.me.user().userID,
+                    i.toString()
+                );
+                await client.messages.send(
+                    newDevice.me.user().userID,
+                    i.toString()
+                );
+            }
             done();
         });
 
         newDevice.init();
     });
 
-    test("Server operations", async (done) => {
-        const server = await client.servers.create("Test Server");
-        const serverList = await client.servers.retrieve();
+    // test("Server operations", async (done) => {
+    //     const server = await client.servers.create("Test Server");
+    //     const serverList = await client.servers.retrieve();
 
-        const [knownServer] = serverList;
-        expect(server.serverID === knownServer.serverID).toBe(true);
+    //     const [knownServer] = serverList;
+    //     expect(server.serverID === knownServer.serverID).toBe(true);
 
-        const retrieveByIDServer = await client.servers.retrieveByID(
-            server.serverID
-        );
-        expect(server.serverID === retrieveByIDServer?.serverID).toBe(true);
+    //     const retrieveByIDServer = await client.servers.retrieveByID(
+    //         server.serverID
+    //     );
+    //     expect(server.serverID === retrieveByIDServer?.serverID).toBe(true);
 
-        await client.servers.delete(server.serverID);
+    //     await client.servers.delete(server.serverID);
 
-        // make another server to be used by channel tests
-        createdServer = await client.servers.create("Channel Test Server");
-        done();
-    });
+    //     // make another server to be used by channel tests
+    //     createdServer = await client.servers.create("Channel Test Server");
+    //     done();
+    // });
 
-    test("Channel operations", async (done) => {
-        const servers = await client.servers.retrieve();
-        const [testServer] = servers;
+    // test("Channel operations", async (done) => {
+    //     const servers = await client.servers.retrieve();
+    //     const [testServer] = servers;
 
-        const channel = await client.channels.create(
-            "Test Channel",
-            testServer.serverID
-        );
+    //     const channel = await client.channels.create(
+    //         "Test Channel",
+    //         testServer.serverID
+    //     );
 
-        await client.channels.delete(channel.channelID);
+    //     await client.channels.delete(channel.channelID);
 
-        const channels = await client.channels.retrieve(testServer.serverID);
-        expect(channels.length).toBe(1);
+    //     const channels = await client.channels.retrieve(testServer.serverID);
+    //     expect(channels.length).toBe(1);
 
-        createdChannel = channels[0];
+    //     createdChannel = channels[0];
 
-        const retrievedByIDChannel = await client.channels.retrieveByID(
-            channels[0].channelID
-        );
-        expect(channels[0].channelID === retrievedByIDChannel?.channelID).toBe(
-            true
-        );
-        done();
-    });
+    //     const retrievedByIDChannel = await client.channels.retrieveByID(
+    //         channels[0].channelID
+    //     );
+    //     expect(channels[0].channelID === retrievedByIDChannel?.channelID).toBe(
+    //         true
+    //     );
+    //     done();
+    // });
 
-    test("Direct messaging", async (done) => {
-        const received: string[] = [];
+    // test("Direct messaging", async (done) => {
+    //     const received: string[] = [];
 
-        const receivedAllExpected = () =>
-            received.includes("initial") && received.includes("subsequent");
+    //     const messagesReceived = () =>
+    //         received.includes("initial") && received.includes("subsequent");
 
-        const onMessage = (message: IMessage) => {
-            if (!message.decrypted) {
-                throw new Error("Message failed to decrypt.");
-            }
-            if (
-                message.direction === "incoming" &&
-                message.decrypted &&
-                message.group === null
-            ) {
-                received.push(message.message);
-                if (receivedAllExpected()) {
-                    client.off("message", onMessage);
-                    done();
-                }
-            }
-        };
-        client.on("message", onMessage);
+    //     const onMessage = (message: IMessage) => {
+    //         if (!message.decrypted) {
+    //             throw new Error("Message failed to decrypt.");
+    //         }
+    //         if (
+    //             message.direction === "incoming" &&
+    //             message.decrypted &&
+    //             message.group === null
+    //         ) {
+    //             received.push(message.message);
+    //             if (messagesReceived()) {
+    //                 client.off("message", onMessage);
+    //                 done();
+    //             }
+    //         }
+    //     };
+    //     client.on("message", onMessage);
 
-        const me = client.me.user();
+    //     const me = client.me.user();
 
-        await client.messages.send(me.userID, "initial");
-        await sleep(500);
-        await client.messages.send(me.userID, "subsequent");
-    });
+    //     await client.messages.send(me.userID, "initial");
+    //     await sleep(500);
+    //     await client.messages.send(me.userID, "subsequent");
+    // });
 
-    test("File operations", async (done) => {
-        const createdFile = Buffer.alloc(1000);
-        createdFile.fill(0);
+    // test("File operations", async (done) => {
+    //     const createdFile = Buffer.alloc(1000);
+    //     createdFile.fill(0);
 
-        const [createdDetails, key] = await client.files.create(createdFile);
-        const fetchedFileRes = await client.files.retrieve(
-            createdDetails.fileID,
-            key
-        );
-        if (!fetchedFileRes) {
-            throw new Error("Error fetching file.");
-        }
+    //     const [createdDetails, key] = await client.files.create(createdFile);
+    //     const fetchedFileRes = await client.files.retrieve(
+    //         createdDetails.fileID,
+    //         key
+    //     );
+    //     if (!fetchedFileRes) {
+    //         throw new Error("Error fetching file.");
+    //     }
 
-        const { data, details } = fetchedFileRes;
+    //     const { data, details } = fetchedFileRes;
 
-        expect(_.isEqual(createdFile, data)).toBe(true);
-        expect(_.isEqual(createdDetails, details)).toBe(true);
+    //     expect(_.isEqual(createdFile, data)).toBe(true);
+    //     expect(_.isEqual(createdDetails, details)).toBe(true);
 
-        done();
-    });
+    //     done();
+    // });
 
-    test("Upload an avatar", async (done) => {
-        const buf = fs.readFileSync("./src/__tests__/ghost.png");
-        await client.me.setAvatar(buf);
+    // test("Upload an avatar", async (done) => {
+    //     const buf = fs.readFileSync("./src/__tests__/ghost.png");
+    //     await client.me.setAvatar(buf);
 
-        // const receivedFile = fs.readFileSync(
-        //     "./avatars/" + client.me.user().userID
-        // );
+    //     // const receivedFile = fs.readFileSync(
+    //     //     "./avatars/" + client.me.user().userID
+    //     // );
 
-        // expect(receivedFile).toEqual(buf);
+    //     // expect(receivedFile).toEqual(buf);
 
-        done();
-    });
+    //     done();
+    // });
 
-    test("Group messaging", async (done) => {
-        const received: string[] = [];
+    // test("Group messaging", async (done) => {
+    //     const received: string[] = [];
 
-        const receivedAllExpected = () =>
-            received.includes("initial") && received.includes("subsequent");
+    //     const messagesReceived = () =>
+    //         received.includes("initial") && received.includes("subsequent");
 
-        const onGroupMessage = (message: IMessage) => {
-            if (!message.decrypted) {
-                throw new Error("Message failed to decrypt.");
-            }
-            if (
-                message.direction === "incoming" &&
-                message.decrypted &&
-                message.group !== null
-            ) {
-                received.push(message.message);
-                if (receivedAllExpected()) {
-                    done();
-                }
-            }
-        };
+    //     const onGroupMessage = (message: IMessage) => {
+    //         if (!message.decrypted) {
+    //             throw new Error("Message failed to decrypt.");
+    //         }
+    //         if (
+    //             message.direction === "incoming" &&
+    //             message.decrypted &&
+    //             message.group !== null
+    //         ) {
+    //             received.push(message.message);
+    //             if (messagesReceived()) {
+    //                 done();
+    //             }
+    //         }
+    //     };
 
-        client.on("message", onGroupMessage);
+    //     client.on("message", onGroupMessage);
 
-        const userIDs: string[] = [
-            /*
-            "71ab7ca2-ad89-4de4-90d3-455b32c24fbd",
-            "acbc01dc-0207-40f8-b7ca-cded77a93bdf",
-            "17e059c2-37fc-471e-9f4c-6fb0027263da",
-         */
-        ];
-        for (const userID of userIDs) {
-            await client.permissions.create({
-                userID,
-                resourceType: "server",
-                resourceID: createdServer!.serverID,
-            });
-        }
+    //     const userIDs: string[] = [
+    //         /*
+    //         "71ab7ca2-ad89-4de4-90d3-455b32c24fbd",
+    //         "acbc01dc-0207-40f8-b7ca-cded77a93bdf",
+    //         "17e059c2-37fc-471e-9f4c-6fb0027263da",
+    //      */
+    //     ];
+    //     for (const userID of userIDs) {
+    //         await client.permissions.create({
+    //             userID,
+    //             resourceType: "server",
+    //             resourceID: createdServer!.serverID,
+    //         });
+    //     }
 
-        await client.messages.group(createdChannel!.channelID, "initial");
-        await sleep(500);
-        await client.messages.group(createdChannel!.channelID, "subsequent");
-    });
+    //     await client.messages.group(createdChannel!.channelID, "initial");
+    //     await sleep(500);
+    //     await client.messages.group(createdChannel!.channelID, "subsequent");
+    // });
 });
 
 afterAll(() => {

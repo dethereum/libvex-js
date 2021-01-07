@@ -657,6 +657,7 @@ export class Client extends EventEmitter {
     private dbPath: string;
     private conn: WebSocket;
     private host: string;
+    private fetching: boolean = false;
 
     // these are created from one set of sign keys
     private signKeys: nacl.SignKeyPair;
@@ -668,11 +669,7 @@ export class Client extends EventEmitter {
     private device?: XTypes.SQL.IDevice;
 
     private isAlive: boolean = true;
-    private failCount: number = 0;
     private reading: boolean = false;
-    private fetchingMail: boolean = false;
-
-    private lockedUsers: string[] = [];
 
     private log: winston.Logger;
 
@@ -840,8 +837,6 @@ export class Client extends EventEmitter {
                 throw err;
             }
         }
-        this.log.info("Got device " + JSON.stringify(this.device, null, 4));
-
         try {
             this.log.info("init socket");
             await this.initSocket();
@@ -908,7 +903,7 @@ export class Client extends EventEmitter {
         }
     }
 
-    public async registerDevice(
+    private async registerDevice(
         username: string,
         password: string
     ): Promise<XTypes.SQL.IDevice | null> {
@@ -1272,12 +1267,6 @@ export class Client extends EventEmitter {
 
     private async sendMessage(userID: string, message: string): Promise<void> {
         try {
-            while (this.lockedUsers.includes(userID)) {
-                this.log.warn("User locked, waiting.");
-                await sleep(500);
-            }
-            this.lockedUsers.push(userID);
-
             const deviceList = await this.getUserDeviceList(userID);
             if (!deviceList) {
                 throw new Error("Couldn't get device list.");
@@ -1290,8 +1279,6 @@ export class Client extends EventEmitter {
                     null
                 );
             }
-
-            this.lockedUsers.splice(this.lockedUsers.indexOf(userID), 1);
         } catch (err) {
             this.log.error(
                 "Message " + (err.message?.mailID || "") + " threw exception."
@@ -2051,34 +2038,41 @@ export class Client extends EventEmitter {
                         publicKey: XUtils.encodeHex(PK),
                         lastUsed: new Date(Date.now()),
                         fingerprint: XUtils.encodeHex(AD),
-                        // TODO: FIX THIS
-                        deviceID: "",
+                        deviceID: mail.sender,
                     };
-                    if (newSession.userID !== this.user!.userID) {
+
+                    try {
                         await this.database.saveSession(newSession);
-
-                        let [user, err] = await this.retrieveUserDBEntry(
-                            newSession.userID
-                        );
-
-                        if (user) {
-                            this.emit("session", newSession, user);
+                    } catch (err) {
+                        if (err.errno !== 19) {
+                            throw err;
                         } else {
-                            let failed = 1;
-                            // retry a couple times
-                            while (!user) {
-                                [user, err] = await this.retrieveUserDBEntry(
-                                    newSession.userID
+                            this.log.warn("Attempted to store duplicate SK.");
+                        }
+                    }
+
+                    let [user, err] = await this.retrieveUserDBEntry(
+                        newSession.userID
+                    );
+
+                    if (user) {
+                        this.emit("session", newSession, user);
+                    } else {
+                        let failed = 1;
+                        // retry a couple times
+                        while (!user) {
+                            [user, err] = await this.retrieveUserDBEntry(
+                                newSession.userID
+                            );
+                            failed++;
+                            if (failed > 3) {
+                                throw new Error(
+                                    "We saved a session, but we didn't get it back from the db!"
                                 );
-                                failed++;
-                                if (failed > 3) {
-                                    throw new Error(
-                                        "We saved a session, but we didn't get it back from the db!"
-                                    );
-                                }
                             }
                         }
                     }
+
                     await this.sendReceipt(mail.nonce, transmissionID);
                 } else {
                     this.log.warn("Mail decryption failed.");
@@ -2112,7 +2106,7 @@ export class Client extends EventEmitter {
             case "mail":
                 this.log.info("Server has informed us of new mail.");
                 await this.getMail();
-                this.fetchingMail = false;
+                this.fetching = false;
                 break;
             case "permission":
                 this.emit("permission", msg.data as IPermission);
@@ -2229,7 +2223,7 @@ export class Client extends EventEmitter {
         while (true) {
             try {
                 await this.getMail();
-                this.fetchingMail = false;
+                this.fetching = false;
             } catch (err) {
                 this.log.warn("Problem fetchingMail mail", err.toString());
             }
@@ -2238,10 +2232,10 @@ export class Client extends EventEmitter {
     }
 
     private async getMail(): Promise<void> {
-        while (this.fetchingMail) {
-            await sleep(500);
+        if (this.fetching) {
+            this.log.warn("Already fetching mail, not going to fetch again.");
         }
-        this.fetchingMail = true;
+        this.fetching = true;
         this.log.info("Fetching mail for " + this.getDevice().deviceID);
         return new Promise((res, rej) => {
             const transmissionID = uuid.v4();
@@ -2251,6 +2245,7 @@ export class Client extends EventEmitter {
                     let mailReceived = 0;
                     if (msg.type === "success") {
                         if (!(msg as XTypes.WS.ISucessMsg).data) {
+                            mailReceived++;
                             this.conn.off("message", callback);
                             this.log.info(
                                 "Received " + mailReceived.toString() + " mail."
@@ -2437,7 +2432,6 @@ export class Client extends EventEmitter {
     private async ping() {
         if (!this.isAlive) {
             this.log.warn("Ping failed.");
-            this.failCount++;
         }
         this.setAlive(false);
         this.send({ transmissionID: uuid.v4(), type: "ping" });
